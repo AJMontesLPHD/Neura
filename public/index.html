@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'sha256-0TWR8ZHOgg/jY6HiZoh5S6aQakE5dMRTL83Ay2gXn6A='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"
+      content="default-src 'none'; script-src 'sha256-hMYohVyI4/3ITaLlO1sgrDlfLReavrHVV/xF/T4SYK8='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"
     />
 
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -1505,6 +1505,16 @@
           transition: none;
         }
       }
+
+      .brand .unified-logo.sidebar-brand {width:100%;max-width:none;transform:scale(1.22);transform-origin:center;margin:16px 0 24px;}
+      header .workspace-department {margin-left:auto;display:flex;max-width:255px;flex:0 1 255px;}
+      .app.menu-open header .workspace-department {visibility:hidden;}
+      .recording-feedback {display:flex;align-items:center;gap:14px;padding:10px 12px;margin:8px 0;border:1px solid #50cfe536;border-radius:12px;background:#51cde908;min-height:54px;}
+      .recording-feedback[hidden] {display:none;}
+      .voice-particles {display:flex;gap:4px;align-items:center;height:34px;flex-shrink:0;}
+      .voice-particles i {display:block;width:3px;height:3px;background:radial-gradient(circle,#8cecf8 1.3px,transparent 1.6px) center/3px 5px repeat-y;filter:drop-shadow(0 0 3px #27cadd);}
+      #recording-label {font-size:12px;color:#b5eff6;}
+      @media(max-width:650px){header{flex-wrap:wrap;row-gap:12px;}header .workspace-department{max-width:210px;flex-basis:auto;margin-left:auto;padding:8px 10px;}header .workspace-department span{font-size:9px;}.recording-feedback{gap:10px}.voice-particles{gap:3px}}
     </style>
   </head>
   <body>
@@ -1600,6 +1610,22 @@
               height="682"
             />
           </div>
+<div class="workspace-department department-ribbon">
+            <svg
+              class="department-emblem"
+              viewBox="0 0 100 100"
+              aria-hidden="true"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M50 5C31 5 17 12 6 23C10 51 25 75 50 93C75 75 90 51 94 23C83 12 69 5 50 5Z"
+              />
+              <path
+                d="M41 21H59V35C65 31 71 30 77 30V47C65 48 59 56 59 66V74H41V66C41 56 35 48 23 47V30C29 30 35 31 41 35Z"
+              /></svg
+            ><span>Laredo Public Health Department</span>
+          </div>
         </header>
         <div class="workspace">
           <div class="topline"><span></span></div>
@@ -1673,6 +1699,7 @@
                 aria-label="Message Neura"
                 placeholder="Ask Neura a question…"
               ></textarea>
+              <div class="recording-feedback" id="recording-feedback" hidden><div class="voice-particles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span id="recording-label" role="status">Listening</span></div>
               <div class="composerbottom">
                 <div class="tools">
                   <button class="tool" type="button" id="upload" disabled title="Document review is not connected yet">
@@ -2028,6 +2055,7 @@
         addFiles(e.dataTransfer.files);
       };
       let recognition=null, dictating=false, dictationPending=false, micRequested=false, micGeneration=0, recorder=null, recordingTimer;
+      let recordingStarted = 0;
       function updateVoice(){
         const active=dictating||micRequested||dictationPending;
         $('#voice').textContent=dictationPending?'Transcribing…':active?'■ Stop dictation':'♩ Dictate';
@@ -2035,6 +2063,9 @@
         $('#voice').classList.toggle('voiceon',active);
         $('#voice').setAttribute('aria-pressed',String(active));
         $('#prompt').readOnly=active;
+        $('#recording-feedback').hidden=!active;
+        if(dictationPending) $('#recording-label').textContent='Transcribing…';
+        else if(micRequested&&!dictating) $('#recording-label').textContent='Allow microphone access…';
       }
       function releaseMic(){
         micRequested=false;micGeneration++;clearTimeout(recordingTimer);
@@ -2095,7 +2126,7 @@
             }catch(error){if(transcriptionGeneration!==micGeneration)return;$('#dictationstatus').textContent=error.name==='TimeoutError'?'Transcription timed out. Please try again.':error.message;}
             finally{if(transcriptionGeneration===micGeneration){dictationPending=false;updateVoice();$('#prompt').focus();}}
           };
-          session.start(1000);dictating=true;updateVoice();
+          session.start(1000);recordingStarted=performance.now();dictating=true;updateVoice();
           $('#dictationstatus').textContent='Recording… Tap Stop when finished (60-second maximum).';
           recordingTimer=setTimeout(()=>{if(session.state==='recording')session.stop();},60000);
         }catch(error){stopDictation();$('#dictationstatus').textContent=error.name==='NotAllowedError'?'Microphone access denied. Allow microphone access in browser site settings.':'Unable to start recording. Check your microphone and try again.';}
@@ -2208,6 +2239,18 @@
         }
         audioLevel +=
           (energy - audioLevel) * (energy > audioLevel ? 0.13 : 0.045);
+        if (dictating) {
+          const elapsed=Math.min(60,Math.floor((performance.now()-recordingStarted)/1000));
+          const label=analyser ? (audioLevel < 0.025 && elapsed>3 ? 'Recording · Speak toward your microphone' : 'Listening') : 'Recording · Microphone level unavailable';
+          const message=label+' · 0:'+String(elapsed).padStart(2,'0');
+          if($('#recording-label').textContent!==message) $('#recording-label').textContent=message;
+        }
+        document.querySelectorAll('.voice-particles i').forEach((bar,i)=>{
+          const level=dictating&&analyser?audioLevel:0;
+          const shape=0.35+0.65*Math.abs(Math.sin(i*0.8+t*0.002));
+          bar.style.height=(3+Math.round(level*31*shape))+'px';
+          bar.style.opacity=dictationPending?'0.4':'1';
+        });
         let moving = !motionPaused,
           tt = moving ? t * 0.00035 : 0,
           scale = Math.min(Math.max(W / 600, 0.62), 1.15),
