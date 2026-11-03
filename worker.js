@@ -1,5 +1,12 @@
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const ACCESS_ISSUER = "https://ajmontes.cloudflareaccess.com";
 const ACCESS_AUD =
   "1e0e7ebe5737579dd57139a53d0fdae8e62a599e30d3dd7372dbf069a7de156f";
+
+const ACCESS_KEYS = createRemoteJWKSet(
+  new URL(`${ACCESS_ISSUER}/cdn-cgi/access/certs`)
+);
 
 function json(data, status = 200) {
   return Response.json(data, {
@@ -12,31 +19,33 @@ function json(data, status = 200) {
 }
 
 export default {
-  async fetch(request, env, ctx) {
-    // Require the configured Cloudflare Access application.
-   if (!ctx.access) {
-  return json({
-    error: "Access identity is unavailable to the Worker.",
-    code: "ACCESS_CONTEXT_MISSING",
-  }, 403);
-}
+  async fetch(request, env) {
+    const token = request.headers.get("Cf-Access-Jwt-Assertion");
 
-if (ctx.access.aud !== ACCESS_AUD) {
-  return json({
-    error: "Access application does not match.",
-    code: "ACCESS_AUD_MISMATCH",
-  }, 403);
-}
+    if (!token) {
+      return json({
+        error: "Please sign in to Neura.",
+        code: "ACCESS_TOKEN_MISSING",
+      }, 401);
+    }
 
     try {
-      const identity = await ctx.access.getIdentity();
-      const email = String(identity.email || "").trim().toLowerCase();
+      const { payload } = await jwtVerify(token, ACCESS_KEYS, {
+        issuer: ACCESS_ISSUER,
+        audience: ACCESS_AUD,
+        algorithms: ["RS256"],
+      });
+
+      const email = String(payload.email || "").trim().toLowerCase();
 
       if (!email.endsWith("@cityoflaredo.com")) {
         return json({ error: "Access denied." }, 403);
       }
     } catch {
-      return json({ error: "Unable to verify your login." }, 403);
+      return json({
+        error: "Unable to verify your login.",
+        code: "ACCESS_TOKEN_INVALID",
+      }, 403);
     }
 
     const url = new URL(request.url);
@@ -50,7 +59,6 @@ if (ctx.access.aud !== ACCESS_AUD) {
       });
     }
 
-    // Chat functionality will be added after website hosting is verified.
     if (url.pathname.startsWith("/api/")) {
       return json({ error: "This endpoint is not connected yet." }, 404);
     }
@@ -62,7 +70,6 @@ if (ctx.access.aud !== ACCESS_AUD) {
       });
     }
 
-    // Serve the website only after verifying the user's login.
     return env.ASSETS.fetch(request);
   },
 };
