@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'sha256-TG6R7j06aRBhfbZTqBw07gEW48dLDSRSwB9QX2xDQRM='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"
+      content="default-src 'none'; script-src 'sha256-lKqRYtCvNrx9EOf4kkVcfn6VM/Ein3wiCTHGArC1r14='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"
     />
 
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -1522,6 +1522,19 @@
       .conversation-menu summary::-webkit-details-marker {display:none;}
       .conversation-menu summary:hover,.conversation-menu summary:focus-visible {background:#233444;outline:1px solid #70cddd;}
       .history .conversation-menu button {position:absolute;right:0;top:30px;background:#172938;border:1px solid #416078;border-radius:6px;padding:10px 16px;width:100px;z-index:3;color:#e3edf7;}
+
+      .logo-home {display:block;background:none;border:0;padding:0;width:100%;cursor:pointer;}
+      .logo-home:focus-visible {outline:2px solid #83e6f5;outline-offset:4px;border-radius:8px;}
+      #attachments {display:flex;flex-wrap:wrap;gap:6px;}
+      .attachment-chip {background:#153746;color:#d9f4fb;border:1px solid #478391;border-radius:14px;padding:6px 10px;font-size:11px;max-width:100%;overflow-wrap:anywhere;}
+      header {position:relative;}
+      @media(max-width:650px){
+        header {flex-wrap:nowrap;gap:8px;align-items:center;padding-top:46px;min-height:100px;}
+        header .workspace-department {position:absolute;right:0;top:0;max-width:200px;margin:0;padding:7px 9px;}
+        .menu-toggle {margin-right:4px;flex-shrink:0;}
+        header .org {width:190px;flex:0 1 190px;min-width:0;}
+        header .org .unified-logo {width:190px;max-width:100%;}
+      }
     </style>
   </head>
   <body>
@@ -1567,12 +1580,7 @@
           />
         </div>
         <button class="new" id="new">＋ &nbsp; New conversation</button>
-        <nav class="nav" aria-label="Main navigation">
-          <button class="active" data-view="chat">
-            ◈ &nbsp; Neura workspace</button
-          ><button data-view="docs">▤ &nbsp; Document library</button
-          ><button data-view="domains">⬡ &nbsp; Accreditation domains</button>
-        </nav>
+
         <div class="history">
           <div class="label">YOUR CONVERSATIONS</div>
           <div id="history"></div>
@@ -1709,8 +1717,8 @@
               <div class="recording-feedback" id="recording-feedback" hidden><div class="voice-particles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span id="recording-label" role="status">Listening</span></div>
               <div class="composerbottom">
                 <div class="tools">
-                  <button class="tool" type="button" id="upload" disabled title="Document review is not connected yet">
-                    ＋ &nbsp; Uploads pending</button
+                  <button class="tool" type="button" id="upload" title="Attach PDF, image or plain-text files">
+                    ＋ &nbsp; Attach</button
                   ><button
                     class="tool"
                     type="button"
@@ -1734,7 +1742,7 @@
               >
                 Record up to 60 seconds. Audio is sent to Cloudflare for transcription when you stop. Review the text before sending.
               </div>
-              <input type="file" multiple hidden id="files" />
+              <input type="file" multiple hidden accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.csv" id="files" />
             </form>
           </section>
           <section class="listpanel" id="panel"></section>
@@ -1746,9 +1754,7 @@
               Human-led, AI-assisted · Internal LPHD tool - not for public
               distribution or commercial use. AI tools can make mistakes; please
               review your work.
-              <span class="data-notice"
-                >Messages are sent to Claude. Document uploads and PHAB source review are not connected yet.</span
-              >
+              
             </div>
             <div class="status-pair">
               <span class="orbstatus" id="orbstatus"
@@ -1845,6 +1851,8 @@
               stopDictation();
             }
             current = c;
+            files = conversationFiles.get(c.id) || [];
+            renderAttachments();
             view("chat");
             render();
           };
@@ -1967,7 +1975,7 @@
         }
         current = { id: Date.now(), messages: [] };
         files = [];
-        $("#attachments").textContent = "";
+        renderAttachments();
         view("chat");
         render();
       };
@@ -1978,6 +1986,22 @@
             $("#prompt").focus();
           }),
       );
+      const conversationFiles = new Map();
+      async function attachmentPayload(selected) {
+        return Promise.all(selected.map(async file => {
+          if (/\.(txt|md|csv)$/i.test(file.name)) {
+            const text = await file.text();
+            if (text.length > 100000) throw new Error(file.name + ": text files must be under 100,000 characters.");
+            return {name:file.name,type:"text/plain",text};
+          }
+          const data = await new Promise((resolve,reject) => {
+            const reader = new FileReader(); reader.onerror = () => reject(new Error("Unable to read " + file.name));
+            reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.readAsDataURL(file);
+          });
+          const ext=file.name.split('.').pop().toLowerCase();
+          return {name:file.name,type:({pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'})[ext],data};
+        }));
+      }
       let sending = false;
       $("#form").onsubmit = async (e) => {
         e.preventDefault();
@@ -1987,8 +2011,8 @@
           toast("Dictation stopped. Review your text, then press Send.");
           return;
         }
-        const text = $("#prompt").value.trim();
-        if (!text) return;
+        const text = $("#prompt").value.trim() || (files.length ? "Please review the attached documents. Identify their main points, missing information, and questions to clarify." : "");
+        if (!text && !files.length) return;
         if (text.length > 8000) { toast("Please keep each message under 8,000 characters."); return; }
         const conversation = current;
         const messages = [];
@@ -2014,7 +2038,7 @@
           const response = await fetch("/api/chat", {
             method: "POST", credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ messages }), signal: AbortSignal.timeout(55000)
+            body: JSON.stringify({ messages, attachments: await attachmentPayload(conversationFiles.get(conversation.id) || []) }), signal: AbortSignal.timeout(90000)
           });
           if (!(response.headers.get("Content-Type") || "").includes("application/json")) {
             throw new Error("Your login may have expired. Reload Neura and sign in again.");
@@ -2042,33 +2066,34 @@
           $("#form").requestSubmit();
         }
       };
+      document.querySelectorAll("img.unified-logo").forEach(logo => {
+        const home=document.createElement("button");home.type="button";home.className="logo-home";
+        home.setAttribute("aria-label","Neura home — new conversation");
+        logo.replaceWith(home);home.append(logo);home.onclick=()=>$("#new").click();
+      });
       $("#upload").onclick = () => $("#files").click();
+      function renderAttachments() {
+        const box = $("#attachments"); box.replaceChildren();
+        files.forEach((file,index) => {
+          const chip=document.createElement("button"); chip.type="button";chip.className="attachment-chip";
+          chip.textContent=file.name+" ×";chip.setAttribute("aria-label","Remove "+file.name);
+          chip.onclick=()=>{if(sending)return;files.splice(index,1);conversationFiles.set(current.id,files);renderAttachments();};
+          box.append(chip);
+        });
+      }
       function addFiles(fs) {
-        toast("Document uploads are not connected yet. You can send a text question.");
-        return;
-        const selected = Array.from(fs);
-        let rejected = 0;
-        for (const f of selected) {
-          if (files.length >= LIMITS.files || f.size > LIMITS.fileBytes) {
-            rejected++;
-            continue;
-          }
-          if (
-            !files.some(
-              (existing) =>
-                existing.name === f.name &&
-                existing.size === f.size &&
-                existing.lastModified === f.lastModified,
-            )
-          )
-            files.push(f);
+        if(sending){toast("Wait for the current response before changing attachments.");return;}
+        let rejected=[];
+        for(const file of Array.from(fs)) {
+          if(!/\.(pdf|png|jpe?g|webp|txt|md|csv)$/i.test(file.name)){rejected.push(file.name+": export to PDF first");continue;}
+          if(files.some(f=>f.name===file.name&&f.size===file.size))continue;
+          if(files.length>=3||file.size>4*1024*1024||files.reduce((n,f)=>n+f.size,0)+file.size>6*1024*1024){rejected.push(file.name+": limit exceeded");continue;}
+          files.push(file);
         }
-        if (rejected)
-          toast("Up to 10 files, 25 MB each, can be staged in this mockup.");
-        $("#attachments").textContent = files.map((f) => f.name).join(" · ");
-        if (!rejected)
-          toast(files.length + " file(s) staged. Contents are not analyzed.");
-        if ($("#panel").style.display === "block") view("docs");
+        conversationFiles.set(current.id,files);renderAttachments();
+        if(rejected.length)toast(rejected.join("; ")+". Up to 3 files, 4 MB each, 6 MB total.");
+        else if(files.length)toast("Attachments ready. Add your question, then Send.");
+        $("#files").value="";
       }
       $("#files").onchange = (e) => addFiles(e.target.files);
       $("#form").ondragover = (e) => e.preventDefault();
@@ -2557,6 +2582,7 @@
       $("#clear-history").onclick = () => {
         stopDictation();
         chats = [];
+        conversationFiles.clear();
         try {
           sessionStorage.removeItem("neura-live-chats");
         } catch {
