@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'sha256-hMYohVyI4/3ITaLlO1sgrDlfLReavrHVV/xF/T4SYK8='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"
+      content="default-src 'none'; script-src 'sha256-TG6R7j06aRBhfbZTqBw07gEW48dLDSRSwB9QX2xDQRM='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"
     />
 
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -1515,6 +1515,13 @@
       .voice-particles i {display:block;width:3px;height:3px;background:radial-gradient(circle,#8cecf8 1.3px,transparent 1.6px) center/3px 5px repeat-y;filter:drop-shadow(0 0 3px #27cadd);}
       #recording-label {font-size:12px;color:#b5eff6;}
       @media(max-width:650px){header{flex-wrap:wrap;row-gap:12px;}header .workspace-department{max-width:210px;flex-basis:auto;margin-left:auto;padding:8px 10px;}header .workspace-department span{font-size:9px;}.recording-feedback{gap:10px}.voice-particles{gap:3px}}
+      .conversation-row {display:flex;align-items:center;gap:6px;position:relative;}
+      .history .conversation-row > button {flex:1;min-width:0;}
+      .conversation-menu {position:relative;flex:0 0 32px;}
+      .conversation-menu summary {list-style:none;cursor:pointer;color:#b3cadd;font-size:23px;text-align:center;border-radius:6px;}
+      .conversation-menu summary::-webkit-details-marker {display:none;}
+      .conversation-menu summary:hover,.conversation-menu summary:focus-visible {background:#233444;outline:1px solid #70cddd;}
+      .history .conversation-menu button {position:absolute;right:0;top:30px;background:#172938;border:1px solid #416078;border-radius:6px;padding:10px 16px;width:100px;z-index:3;color:#e3edf7;}
     </style>
   </head>
   <body>
@@ -1573,7 +1580,7 @@
             Clear session history
           </button>
           <p style="font-size: 10px; color: #60738c">
-            Session history · design mockup
+            Conversations are stored in this browser tab’s session and survive refreshes. Use Clear session history to remove them from this tab. Browser restoration may retain them.
           </p>
         </div>
         <div class="asidebottom">
@@ -1792,6 +1799,7 @@
             )
             .map((c) => ({
               id: c.id,
+              title: typeof c.title === "string" ? c.title.slice(0, 80) : "",
               messages: c.messages
                 .slice(-LIMITS.messages)
                 .filter(
@@ -1826,7 +1834,8 @@
         h.replaceChildren();
         chats.slice(0, 7).forEach((c) => {
           let b = document.createElement("button");
-          b.textContent = c.messages[0]?.text || "New conversation";
+          b.textContent = c.title || c.messages[0]?.text || "New conversation";
+          b.title = b.textContent;
           b.onclick = () => {
             if (micRequested || dictating || dictationPending) {
               if (recognition) {
@@ -1839,7 +1848,20 @@
             view("chat");
             render();
           };
-          h.append(b);
+          const row = document.createElement("div"); row.className = "conversation-row";
+          const menu = document.createElement("details"); menu.className = "conversation-menu";
+          const toggle = document.createElement("summary"); toggle.textContent = "⋯";
+          toggle.setAttribute("aria-label", "Options for " + b.textContent);
+          const rename = document.createElement("button"); rename.type = "button"; rename.textContent = "Rename";
+          rename.onclick = () => {
+            const title = window.prompt("Conversation name", c.title || c.messages[0]?.text.slice(0, 80) || "New conversation");
+            if (title === null) { menu.open = false; return; }
+            c.title = title.trim().slice(0, 80);
+            try { sessionStorage.setItem("neura-live-chats", JSON.stringify(chats.slice(0, 30))); }
+            catch { toast("Name changed for this visit; browser storage is unavailable."); }
+            history();
+          };
+          menu.append(toggle, rename); row.append(b, menu); h.append(row);
         });
       }
       function render() {
@@ -1850,7 +1872,7 @@
           d.className = "msg " + v.role;
           let b = document.createElement("b");
           b.textContent =
-            v.role === "user" ? "You" : "Neura · Claude";
+            v.role === "user" ? "You" : "Neura";
           d.append(
             b,
             document.createElement("br"),
