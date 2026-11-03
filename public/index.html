@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'sha256-CkpDMFh2rHoWRlLtR5A1g78jZ772vwkw+EE01OWSy40='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"
+      content="default-src 'none'; script-src 'sha256-0TWR8ZHOgg/jY6HiZoh5S6aQakE5dMRTL83Ay2gXn6A='; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"
     />
 
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -1698,8 +1698,7 @@
                   line-height: 1.5;
                 "
               >
-                Review your text before sending. Browser dictation may process
-                audio through its speech service.
+                Record up to 60 seconds. Audio is sent to Cloudflare for transcription when you stop. Review the text before sending.
               </div>
               <input type="file" multiple hidden id="files" />
             </form>
@@ -2028,167 +2027,80 @@
         e.preventDefault();
         addFiles(e.dataTransfer.files);
       };
-      let recognition = null,
-        dictating = false,
-        dictationPending = false,
-        micRequested = false,
-        micGeneration = 0;
-      const SpeechAPI =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-      const voiceNotice =
-        "Review your text before sending. Browser dictation may process audio through its speech service.";
-      function releaseMic() {
-        micRequested = false;
-        micGeneration++;
-        if (micStream) {
-          micStream.getTracks().forEach((t) => t.stop());
-          micStream = null;
-        }
-        analyser = null;
-        if (audioContext && audioContext.state !== "closed")
-          audioContext.close().catch(() => {});
-        audioLevel = 0;
+      let recognition=null, dictating=false, dictationPending=false, micRequested=false, micGeneration=0, recorder=null, recordingTimer;
+      function updateVoice(){
+        const active=dictating||micRequested||dictationPending;
+        $('#voice').textContent=dictationPending?'Transcribing…':active?'■ Stop dictation':'♩ Dictate';
+        $('#voice').disabled=dictationPending;
+        $('#voice').classList.toggle('voiceon',active);
+        $('#voice').setAttribute('aria-pressed',String(active));
+        $('#prompt').readOnly=active;
       }
-      function updateVoice() {
-        let active = micRequested || dictating || dictationPending;
-        $("#voice").classList.toggle("voiceon", active);
-        $("#voice").textContent = active
-          ? dictating || dictationPending
-            ? "■  Stop dictation"
-            : "■  Stop microphone"
-          : "♩  Dictate";
-        $("#voice").setAttribute("aria-pressed", String(active));
-        $("#prompt").readOnly = dictating || dictationPending;
+      function releaseMic(){
+        micRequested=false;micGeneration++;clearTimeout(recordingTimer);
+        if(micStream)micStream.getTracks().forEach(t=>t.stop());
+        micStream=null;analyser=null;audioLevel=0;
+        if(audioContext&&audioContext.state!=='closed')audioContext.close().catch(()=>{});
       }
-      async function startVisualizer() {
-        micRequested = true;
-        let generation = ++micGeneration;
-        updateVoice();
-        try {
-          let stream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-          });
-          if (!micRequested || generation !== micGeneration) {
-            stream.getTracks().forEach((t) => t.stop());
-            return;
-          }
-          micStream = stream;
-          audioContext = new AudioContext();
-          await audioContext.resume();
-          analyser = audioContext.createAnalyser();
-          analyser.fftSize = 256;
-          audioContext.createMediaStreamSource(stream).connect(analyser);
-          updateVoice();
-        } catch {
-          if (generation === micGeneration) {
-            micRequested = false;
-            updateVoice();
-            if (!dictating && !dictationPending)
-              $("#dictationstatus").textContent =
-                "Microphone unavailable. Check site microphone permissions and your input device.";
-          }
+      function stopDictation(){
+        if(recorder&&recorder.state!=='inactive'){
+          recorder.onstop=null;recorder.ondataavailable=null;recorder.stop();
         }
+        recorder=null;releaseMic();dictating=false;dictationPending=false;updateVoice();
       }
-      function finishDictation(message) {
-        dictating = false;
-        dictationPending = false;
-        updateVoice();
-        $("#dictationstatus").textContent = message || voiceNotice;
-      }
-      function stopDictation() {
-        let old = recognition;
-        recognition = null;
-        if (old) {
-          old.onresult = null;
-          old.onend = null;
-          try {
-            old.abort();
-          } catch {}
+      $('#voice').onclick=async()=>{
+        if(dictationPending)return;
+        if(recorder&&recorder.state==='recording'){recorder.stop();return;}
+        if(micRequested){stopDictation();return;}
+        if(!window.MediaRecorder||!navigator.mediaDevices?.getUserMedia){
+          $('#dictationstatus').textContent='Audio recording is unavailable. Use your keyboard microphone or type.';return;
         }
-        releaseMic();
-        finishDictation();
-      }
-      $("#voice").onclick = () => {
-        if (micRequested || dictating || dictationPending) {
-          stopDictation();
-          return;
-        }
-        startVisualizer();
-        if (!SpeechAPI) {
-          finishDictation(
-            "Browser dictation is unavailable. The logo can still react to your microphone. Use your device keyboard dictation in the message box.",
-          );
-          return;
-        }
-        let base = $("#prompt").value;
-        let session = new SpeechAPI();
-        recognition = session;
-        session.lang = navigator.language || "en-US";
-        session.continuous = true;
-        session.interimResults = true;
-        dictationPending = true;
-        updateVoice();
-        $("#dictationstatus").textContent = "Connecting to browser dictation…";
-        let failed = false;
-        session.onresult = (e) => {
-          if (recognition !== session) return;
-          let text = "";
-          for (let i = 0; i < e.results.length; i++)
-            text += e.results[i][0].transcript;
-          $("#prompt").value =
-            base + (base && !/\s$/.test(base) ? " " : "") + text;
-          $("#prompt").scrollTop = $("#prompt").scrollHeight;
-        };
-        session.onstart = () => {
-          if (recognition !== session) return;
-          dictationPending = false;
-          dictating = true;
-          updateVoice();
-          $("#dictationstatus").textContent =
-            "Listening… Stop dictation to edit. Press Send only when ready.";
-        };
-        session.onerror = (e) => {
-          if (recognition !== session) return;
-          failed = true;
-          let message = {
-            "not-allowed":
-              "Browser dictation permission was denied. Check speech and microphone permissions.",
-            "service-not-allowed":
-              "The browser speech service is disabled. Use your device keyboard dictation in the message box.",
-            "audio-capture":
-              "The speech service could not access a microphone. Check your input device.",
-            network:
-              "Browser transcription could not connect. No speech-to-text is available right now. The logo can still react to your microphone. Use device keyboard dictation in the message box, or type.",
-            "no-speech":
-              "No speech detected. Stop the microphone, then click Dictate to retry.",
-            "language-not-supported":
-              "The browser speech service does not support this language.",
-          }[e.error];
-          finishDictation(
-            message ||
-              "Browser dictation stopped. Your existing text is preserved.",
-          );
-        };
-        session.onend = () => {
-          if (recognition === session) {
-            recognition = null;
-            if (!failed)
-              finishDictation(
-                "Dictation ended. Your text is ready to review. Click Stop microphone when finished.",
-              );
-          }
-        };
-        try {
-          session.start();
-        } catch {
-          failed = true;
-          recognition = null;
-          finishDictation(
-            "Browser dictation could not start. Use device keyboard dictation or type. The logo can still react to microphone input.",
-          );
-        }
+        const conversation=current,base=$('#prompt').value;
+        micRequested=true;const generation=++micGeneration;updateVoice();
+        $('#dictationstatus').textContent='Allow microphone access to start recording.';
+        try{
+          const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+          if(generation!==micGeneration){stream.getTracks().forEach(t=>t.stop());return;}
+          micStream=stream;
+          try{
+            const Audio=window.AudioContext||window.webkitAudioContext;
+            audioContext=new Audio();await audioContext.resume();
+            analyser=audioContext.createAnalyser();analyser.fftSize=256;
+            audioContext.createMediaStreamSource(stream).connect(analyser);
+          }catch{analyser=null;}
+          const format=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus','audio/webm'].find(t=>MediaRecorder.isTypeSupported(t));
+          const session=new MediaRecorder(stream,format?{mimeType:format}:undefined);
+          recorder=session;const chunks=[];let bytes=0,oversized=false;
+          session.ondataavailable=e=>{
+            if(!e.data.size)return;bytes+=e.data.size;
+            if(bytes>4*1024*1024){oversized=true;if(session.state==='recording')session.stop();}
+            else chunks.push(e.data);
+          };
+          session.onerror=()=>{stopDictation();$('#dictationstatus').textContent='Recording failed. Please try again.';};
+          session.onstop=async()=>{
+            recorder=null;releaseMic();dictating=false;
+            const transcriptionGeneration=micGeneration;
+            if(oversized){updateVoice();$('#dictationstatus').textContent='Recording too large. Try a shorter recording.';return;}
+            dictationPending=true;updateVoice();$('#dictationstatus').textContent='Transcribing your recording…';
+            try{
+              const blob=new Blob(chunks,{type:session.mimeType||format||'audio/webm'});
+              const response=await fetch('/api/transcribe',{method:'POST',credentials:'same-origin',headers:{'Content-Type':blob.type},body:blob,signal:AbortSignal.timeout(60000)});
+              if(!(response.headers.get('Content-Type')||'').includes('application/json'))throw new Error('Your login may have expired. Reload Neura and sign in.');
+              const data=await response.json();if(transcriptionGeneration!==micGeneration)return;if(!response.ok)throw new Error(data.error||'Transcription failed.');
+              if(current!==conversation)throw new Error('Conversation changed. Please record again.');
+              if(typeof data.text!=='string'||!data.text.trim())throw new Error('No speech detected. Please try again.');
+              const value=base+(base&&!/\s$/.test(base)?' ':'')+data.text;
+              if(value.length>8000)throw new Error('Transcript exceeds the message limit. Try a shorter recording.');
+              $('#prompt').value=value;$('#dictationstatus').textContent='Transcript ready. Review or edit it, then press Send.';
+            }catch(error){if(transcriptionGeneration!==micGeneration)return;$('#dictationstatus').textContent=error.name==='TimeoutError'?'Transcription timed out. Please try again.':error.message;}
+            finally{if(transcriptionGeneration===micGeneration){dictationPending=false;updateVoice();$('#prompt').focus();}}
+          };
+          session.start(1000);dictating=true;updateVoice();
+          $('#dictationstatus').textContent='Recording… Tap Stop when finished (60-second maximum).';
+          recordingTimer=setTimeout(()=>{if(session.state==='recording')session.stop();},60000);
+        }catch(error){stopDictation();$('#dictationstatus').textContent=error.name==='NotAllowedError'?'Microphone access denied. Allow microphone access in browser site settings.':'Unable to start recording. Check your microphone and try again.';}
       };
-      window.addEventListener("pagehide", stopDictation);
+      window.addEventListener('pagehide',stopDictation);
 
       const canvas = $("#particles"),
         ctx = canvas.getContext("2d");
