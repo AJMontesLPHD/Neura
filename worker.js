@@ -14,9 +14,19 @@ function json(data, status = 200) {
 export default {
   async fetch(request, env, ctx) {
     // Require the configured Cloudflare Access application.
-    if (!ctx.access || ctx.access.aud !== ACCESS_AUD) {
-      return json({ error: "Please sign in to Neura." }, 403);
-    }
+   if (!ctx.access) {
+  return json({
+    error: "Access identity is unavailable to the Worker.",
+    code: "ACCESS_CONTEXT_MISSING",
+  }, 403);
+}
+
+if (ctx.access.aud !== ACCESS_AUD) {
+  return json({
+    error: "Access application does not match.",
+    code: "ACCESS_AUD_MISMATCH",
+  }, 403);
+}
 
     try {
       const identity = await ctx.access.getIdentity();
