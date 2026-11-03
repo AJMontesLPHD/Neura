@@ -19,6 +19,40 @@ function json(data, status = 200) {
 }
 
 
+
+async function transcribe(request, env) {
+  if (request.headers.get("Origin") !== new URL(request.url).origin)
+    return json({error:"Please record from Neura."},403);
+  if (!env.AI) return json({error:"Speech service is not configured yet."},503);
+  const type=(request.headers.get("Content-Type")||"").split(";")[0];
+  if (!["audio/webm","audio/mp4","audio/ogg","audio/wav"].includes(type))
+    return json({error:"Unsupported recording format."},415);
+  const reader=request.body?.getReader();
+  if (!reader) return json({error:"No recording received."},400);
+  const chunks=[]; let size=0;
+  while(true) {
+    const {done,value}=await reader.read(); if(done) break;
+    size+=value.byteLength;
+    if(size>4*1024*1024) {await reader.cancel();return json({error:"Recording is too large. Try a shorter recording."},413);}
+    chunks.push(value);
+  }
+  if(size<100) return json({error:"Recording was empty. Please try again."},400);
+  const bytes=new Uint8Array(size); let offset=0;
+  for(const c of chunks){bytes.set(c,offset);offset+=c.length;}
+  let binary="";
+  for(let i=0;i<bytes.length;i+=8192) binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+  try {
+    const result=await env.AI.run("@cf/openai/whisper-large-v3-turbo",{
+      audio:btoa(binary),task:"transcribe",vad_filter:true
+    });
+    const text=String(result.text||"").trim();
+    if(!text) return json({error:"No speech detected. Please try again."},422);
+    return json({text});
+  } catch {
+    return json({error:"Transcription could not complete. Check Workers AI availability and account limits, then try again."},502);
+  }
+}
+
 const MODEL = "claude-sonnet-4-6";
 const SYSTEM = "You are Neura, an internal assistant for the Laredo Public Health Department. Be concise, factual, and clear. PHAB reference documents and department procedures are not connected yet. Do not claim to have reviewed them, invent citations, or certify accreditation compliance. State when source documents are needed.";
 
@@ -179,6 +213,10 @@ export default {
           "Content-Security-Policy": "default-src 'none'; script-src 'nonce-" + nonce + "'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         },
       });
+    }
+    if (url.pathname === "/api/transcribe") {
+      if(request.method !== "POST") return json({error:"Use POST."},405);
+      return transcribe(request,env);
     }
     if (url.pathname === "/api/chat") {
       if (request.method !== "POST") return json({ error: "Use POST to send a chat message." }, 405);
