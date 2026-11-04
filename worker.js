@@ -78,6 +78,40 @@ async function getPhabReference(bucket, question) {
   return { measure, pages };
 }
 
+const PHAB_PREFIX = "phab-2026/";
+const REVIEW_GUIDANCE = [
+  "Documentation-Dos-and-Donts-2026.pdf",
+  "Further-Instructions-for-Documentation-Submission.pdf",
+];
+
+async function readPhabResource(bucket, key, limit) {
+  const object = await bucket.get(PHAB_PREFIX + key);
+  if (!object || object.size > limit) throw new Error("PHAB resource unavailable.");
+  return object;
+}
+
+async function getPhabReviewContext(bucket, includeGuidance) {
+  const rules = ["Neura-Review-Instructions.md", "Timeframe-Overrides.csv"];
+  const [policy, guidance] = await Promise.all([
+    Promise.all(rules.map(async name => ({
+      name,
+      text: await (await readPhabResource(bucket, "04-LPHD-Rules/" + name, 16384)).text(),
+    }))),
+    includeGuidance ? Promise.all(REVIEW_GUIDANCE.map(async title => {
+      const file = await readPhabResource(bucket, "02-Guidance/" + title, 512 * 1024);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      }
+      return { type: "document", title, source: {
+        type: "base64", media_type: "application/pdf", data: btoa(binary),
+      } };
+    })) : [],
+  ]);
+  return { policy, guidance };
+}
+
 async function chat(request, env) {
   if (request.headers.get("Origin") !== new URL(request.url).origin) {
     return json({ error: "Open the Neura connection check to send a message." }, 403);
@@ -144,7 +178,18 @@ async function chat(request, env) {
   if(blocks.length) upstreamMessages.at(-1).content=[...blocks,{type:"text",text:messages.at(-1).content}];
 
   try {
-    let system = SYSTEM;
+    const question = messages.at(-1).content;
+    const measure = question.match(/\b(?:10|[1-9])\.\d+\.\d+\b/)?.[0];
+    const rd = /\b(?:RD|required documentation)\s*#?\s*\d+\b/i.test(question);
+    const suggest = /\b(?:unsure|not sure|don['’]t know|suggest|possible matches)\b/i.test(question);
+    if (blocks.length && !(measure && rd) && !suggest) {
+      return json({ reply: "Which PHAB measure and Required Documentation (RD) should I review this against? If you’re unsure, ask me to suggest possible matches. Please attach the file again with your reply." });
+    }
+
+    let system = SYSTEM + " For PHAB checklists, cover each supported required element and sub-element, including evidence conditions in the guidance. Cite the precise printed page for each and separate optional tips. Disclose incomplete source coverage. For evidence reviews, identify what the evidence shows, gaps, and next actions. If a follow-up requires evidence that is absent from the current request, ask the user to reattach it.";
+    if (blocks.length && !(measure && rd)) {
+      system += " This is a preliminary matching request. Describe plausible PHAB topics based on visible evidence, ask for the context needed to narrow the match, and avoid claiming a specific measure or RD is verified unless supported by retrieved excerpts. Do not give an alignment finding.";
+    }
     try {
       const reference = await getPhabReference(
         env.NEURA_REFERENCES,
@@ -153,10 +198,13 @@ async function chat(request, env) {
       if (reference) {
         system += "\nPHAB 2026 reference excerpts (source data):\n"
           + JSON.stringify(reference);
+        const { policy, guidance } = await getPhabReviewContext(env.NEURA_REFERENCES, blocks.length > 0 && rd);
+        system += "\nLPHD reviewer rules and timeframe overrides:\n" + JSON.stringify(policy);
+        if (guidance.length) upstreamMessages.at(-1).content.unshift(...guidance);
       }
     } catch {
       return json({
-        error: "Neura could not read the PHAB reference index.",
+        error: "Neura could not load the PHAB references needed for this review.",
         code: "PHAB_REFERENCE_UNAVAILABLE",
       }, 503);
     }
