@@ -10,5 +10,11 @@
   },
   "ai": {
     "binding": "AI"
+  }, 
+"r2_buckets": [
+  {
+    "binding": "NEURA_REFERENCES",
+    "bucket_name": "neura-references"
   }
+]
 }
