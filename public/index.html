@@ -1742,19 +1742,16 @@
               >
                 Record up to 60 seconds. Review the text before sending.
               </div>
+              <p id="upload-help">Drag and drop up to 3 individual files here, or paste a screenshot. PDF, PNG, JPEG, WebP, TXT, Markdown, or CSV. 4 MB per file, 6 MB total.</p>
               <input type="file" multiple hidden accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.csv" id="files" />
             </form>
           </section>
           <section class="listpanel" id="panel"></section>
           <div class="meta">
-            <div
-              class="footer-line"
-              title="Text chat is connected to Claude. PHAB reference documents are not connected yet."
-            >
-              Human-led, AI-assisted · Internal LPHD tool - not for public
-              distribution or commercial use. AI tools can make mistakes; please
-              review your work.
-              
+            <div class="footer-line">
+              Internal LPHD tool. Do not upload protected health information (PHI)
+              or personally identifiable information (PII). Files you send for
+              AI review are shared with Anthropic. Keep official records in LPHD SharePoint.
             </div>
             <div class="status-pair">
               <span class="orbstatus" id="orbstatus"
@@ -2096,11 +2093,33 @@
         $("#files").value="";
       }
       $("#files").onchange = (e) => addFiles(e.target.files);
-      $("#form").ondragover = (e) => e.preventDefault();
-      $("#form").ondrop = (e) => {
-        e.preventDefault();
-        addFiles(e.dataTransfer.files);
-      };
+      $("#form").addEventListener("dragover", (event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      });
+      $("#form").addEventListener("drop", (event) => {
+        const transfer = event.dataTransfer;
+        if (!transfer.types.includes("Files")) return;
+        event.preventDefault();
+        if (Array.from(transfer.items).some(item => item.webkitGetAsEntry?.()?.isDirectory)) {
+          toast("Drop individual files. To use files from a folder, open it and select the files.");
+          return;
+        }
+        if (transfer.files.length) addFiles(transfer.files);
+      });
+      $("#prompt").addEventListener("paste", (event) => {
+        const images = Array.from(event.clipboardData?.items ?? [])
+          .filter(item => item.kind === "file" && item.type.startsWith("image/"))
+          .map(item => item.getAsFile()).filter(Boolean);
+        if (!images.length) return;
+        if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+        addFiles(images.map((file, index) => {
+          const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[file.type];
+          if (!extension) return file;
+          return new File([file], "Screenshot-" + Date.now() + "-" + (index + 1) + "." + extension, { type: file.type });
+        }));
+      });
       let recognition=null, dictating=false, dictationPending=false, micRequested=false, micGeneration=0, recorder=null, recordingTimer;
       let recordingStarted = 0;
       function updateVoice(){
