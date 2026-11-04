@@ -90,14 +90,14 @@ async function readPhabResource(bucket, key, limit) {
   return object;
 }
 
-async function getPhabReviewContext(bucket, includeGuidance) {
+async function getPhabReviewContext(bucket, titles) {
   const rules = ["Neura-Review-Instructions.md", "Timeframe-Overrides.csv"];
   const [policy, guidance] = await Promise.all([
     Promise.all(rules.map(async name => ({
       name,
       text: await (await readPhabResource(bucket, "04-LPHD-Rules/" + name, 16384)).text(),
     }))),
-    includeGuidance ? Promise.all(REVIEW_GUIDANCE.map(async title => {
+    Promise.all(titles.map(async title => {
       const file = await readPhabResource(bucket, "02-Guidance/" + title, 512 * 1024);
       const bytes = new Uint8Array(await file.arrayBuffer());
       let binary = "";
@@ -107,7 +107,7 @@ async function getPhabReviewContext(bucket, includeGuidance) {
       return { type: "document", title, source: {
         type: "base64", media_type: "application/pdf", data: btoa(binary),
       } };
-    })) : [],
+    })),
   ]);
   return { policy, guidance };
 }
@@ -224,13 +224,12 @@ async function chat(request, env) {
     const measure = question.match(/\b(?:10|[1-9])\.\d+\.\d+\b/)?.[0];
     let system = SYSTEM + " For PHAB checklists, cover each supported requirement and cite its precise printed page. Separate optional tips. For evidence reviews, use the shared references to identify the measure, RD, printed page, what the evidence demonstrates, and what additional documentation is needed. Distinguish supporting evidence from a complete deliverable. Ask only for missing facts that could change the finding. Do not ask staff to supply the PHAB standards or choose a measure when reviewing an attachment.";
     const discovery = blocks.length > 0 && !measure;
-    if (measure || discovery) {
-      let index, context;
+    const domain6 = /\bdomain\s*6\b/i.test(question) || Boolean(measure?.startsWith("6."));
+    const aao = /\b(?:AAO|alternate assessment option|site visit)\b/i.test(question);
+    if (measure || discovery || domain6 || aao) {
+      let index;
       try {
-        [index, context] = await Promise.all([
-          readPhabIndex(env.NEURA_REFERENCES),
-          getPhabReviewContext(env.NEURA_REFERENCES, blocks.length > 0),
-        ]);
+        index = measure || discovery ? await readPhabIndex(env.NEURA_REFERENCES) : [];
       } catch {
         return json({
           error: "Neura could not load the shared PHAB references. Try again or contact LPHD support.",
@@ -238,19 +237,34 @@ async function chat(request, env) {
         }, 503);
       }
 
-      const ids = discovery ? await findPhabMeasures(env, index, blocks, question) : [measure];
+      const ids = discovery ? await findPhabMeasures(env, index, blocks, question) : measure ? [measure] : [];
       const references = ids.map(id => getPhabReference(index, id)).filter(reference => reference.pages.length);
-      if (!references.length) {
+      if ((measure || discovery) && !references.length) {
         return json({ reply: discovery
           ? "I searched the shared PHAB 2026 index across Domains 1–10 and did not find a defensible match for this evidence."
           : "I could not locate Measure " + measure + " in the shared PHAB 2026 index. Check the measure number." });
       }
+      const titles = blocks.length ? [...REVIEW_GUIDANCE] : [];
+      if (aao || references.length) titles.push("PHAB-2026-AAO-August.pdf");
+      if (domain6 || ids.some(id => id.startsWith("6."))) titles.push("PHAB-2026-Domain-6-Tip-Sheet.pdf");
+      let context;
+      try {
+        context = await getPhabReviewContext(env.NEURA_REFERENCES, titles);
+      } catch {
+        return json({
+          error: "Neura could not load the shared PHAB guidance. Try again or contact LPHD support.",
+          code: "PHAB_REFERENCE_UNAVAILABLE",
+        }, 503);
+      }
+      system += " Check AAO eligibility for the exact RD using the AAO guidance. LPHD has not selected its AAO items. If eligible, say staff may ask the accreditation coordinator to consider site-visit assessment and continue to explain the standard submission path. Apply the e-PHAB timeframe override only for the exact measure, RD and example, state both values when they differ, identify the LPHD tracker as the source of the e-PHAB value, and flag an uncertain date anchor.";
       system += "\nPHAB 2026 reference excerpts:\n" + JSON.stringify(references);
       system += "\nLPHD reviewer rules and timeframe overrides:\n" + JSON.stringify(context.policy);
       if (discovery) {
         system += "\nThese are candidate matches from a search across all domains. Report only matches supported by the supplied RD excerpts, or say that none of the candidates are defensible. Do not describe the shortlist as exhaustive.";
       }
-      if (context.guidance.length) upstreamMessages.at(-1).content.unshift(...context.guidance);
+      if (context.guidance.length) {
+        upstreamMessages.at(-1).content = [...context.guidance, ...blocks, { type: "text", text: question }];
+      }
     }
     const upstream = await requestClaude(env, {
       max_tokens: 2048, system, messages: upstreamMessages,
