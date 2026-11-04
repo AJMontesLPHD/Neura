@@ -324,24 +324,6 @@
         color: #b8cadd;
         white-space: pre-wrap;
       }
-      .reply { white-space: normal; overflow-wrap: anywhere; }
-      .reply > * { margin: 0.6em 0; }
-      .reply h2, .reply h3, .reply h4, .reply h5, .reply h6 {
-        color: #edf3fb;
-        font-size: 1.1em;
-        line-height: 1.35;
-      }
-      .reply ul, .reply ol { padding-inline-start: 1.6em; }
-      .reply hr { border: 0; border-top: 1px solid #40556d; }
-      .reply-table { overflow-x: auto; }
-      .reply table { border-collapse: collapse; width: 100%; }
-      .reply th, .reply td {
-        border: 1px solid #40556d;
-        padding: 0.35em 0.55em;
-        text-align: start;
-        vertical-align: top;
-      }
-      .reply th { background: #203044; }
       .msg.user {
         margin-left: 20%;
         background: #203044;
@@ -1890,74 +1872,6 @@
           menu.append(toggle, rename); row.append(b, menu); h.append(row);
         });
       }
-      function renderReply(text) {
-        const reply = document.createElement("div");
-        reply.className = "reply";
-        const lines = text.replace(/\r\n?/g, "\n").split("\n");
-        function append(parent, tag, value = "") {
-          const node = document.createElement(tag);
-          const parts = value.split(/(\*\*[^*]+\*\*|\x60[^\x60]+\x60|\*[^*]+\*)/g);
-          parts.forEach((part, index) => {
-            if (index % 2 === 0) {
-              node.append(document.createTextNode(part));
-            } else {
-              const marker = part.startsWith("**") ? 2 : 1;
-              const span = document.createElement(marker === 2 ? "strong" : part.startsWith("*") ? "em" : "code");
-              span.textContent = part.slice(marker, -marker);
-              node.append(span);
-            }
-          });
-          parent.append(node);
-          return node;
-        }
-        const listItem = /^\s*(?:([-+*])|(\d+)[.)])\s+(.*)$/;
-        const separator = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
-        const cells = line => line.trim().replace(/^\||\|$/g, "").split("|").map(cell => cell.trim());
-        let list;
-        let paragraph;
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          const item = line.match(listItem);
-          if (!item) list = undefined;
-          if (line.includes("|") && separator.test(lines[i + 1] || "")) {
-            const wrap = append(reply, "div");
-            wrap.className = "reply-table";
-            wrap.tabIndex = 0;
-            wrap.setAttribute("role", "region");
-            wrap.setAttribute("aria-label", "Neura reply table");
-            const table = append(wrap, "table");
-            const header = append(append(table, "thead"), "tr");
-            cells(line).forEach(cell => append(header, "th", cell).scope = "col");
-            const body = append(table, "tbody");
-            i++;
-            while (lines[i + 1]?.includes("|")) {
-              const row = append(body, "tr");
-              cells(lines[++i]).forEach(cell => append(row, "td", cell));
-            }
-            paragraph = undefined;
-          } else if (item) {
-            const type = item[2] ? "ol" : "ul";
-            if (list?.localName !== type) {
-              list = append(reply, type);
-              if (item[2]) list.start = Number(item[2]);
-            }
-            append(list, "li", item[3]);
-            paragraph = undefined;
-          } else {
-            const heading = line.match(/^(#{1,6})\s+(.+)$/);
-            if (!line || heading || /^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) {
-              paragraph = undefined;
-              if (heading) append(reply, "h" + Math.min(heading[1].length + 1, 6), heading[2]);
-              else if (line) append(reply, "hr");
-            } else {
-              if (!paragraph) paragraph = append(reply, "p");
-              if (paragraph.childNodes.length) paragraph.append(document.createElement("br"));
-              append(paragraph, "span", line);
-            }
-          }
-        }
-        return reply;
-      }
       function render() {
         let m = $("#messages");
         m.replaceChildren();
@@ -1967,9 +1881,11 @@
           let b = document.createElement("b");
           b.textContent =
             v.role === "user" ? "You" : "Neura";
-          d.append(b);
-          if (v.role === "assistant") d.append(renderReply(v.text));
-          else d.append(document.createElement("br"), document.createTextNode(v.text));
+          d.append(
+            b,
+            document.createElement("br"),
+            document.createTextNode(v.text),
+          );
           m.append(d);
         });
         m.style.display = current.messages.length ? "block" : "none";
