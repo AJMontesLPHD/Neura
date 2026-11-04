@@ -127,7 +127,7 @@ async function findPhabMeasures(env, index, evidence, question) {
     messages: [{ role: "user", content: [...evidence, {
       type: "text", text: JSON.stringify({ question, catalog: Object.fromEntries(catalog) }),
     }] }],
-  }, 16000);
+  }, 35000);
   if (!response.ok) {
     await response.body?.cancel();
     throw new Error("PHAB match request failed.");
@@ -237,7 +237,18 @@ async function chat(request, env) {
         }, 503);
       }
 
-      const ids = discovery ? await findPhabMeasures(env, index, blocks, question) : measure ? [measure] : [];
+      let ids;
+      try {
+        ids = discovery ? await findPhabMeasures(env, index, blocks, question) : measure ? [measure] : [];
+      } catch (error) {
+        const timedOut = error.name === "TimeoutError";
+        return json({
+          error: timedOut
+            ? "Searching the PHAB measures timed out. Try again or specify a domain or measure."
+            : "Neura could not complete the PHAB measure search. Try again or contact LPHD support.",
+          code: timedOut ? "PHAB_SEARCH_TIMEOUT" : "PHAB_SEARCH_FAILED",
+        }, timedOut ? 504 : 502);
+      }
       const references = ids.map(id => getPhabReference(index, id)).filter(reference => reference.pages.length);
       if ((measure || discovery) && !references.length) {
         return json({ reply: discovery
@@ -268,7 +279,7 @@ async function chat(request, env) {
     }
     const upstream = await requestClaude(env, {
       max_tokens: 2048, system, messages: upstreamMessages,
-    }, discovery ? 28000 : 45000);
+    }, 45000);
     if (!upstream.ok) {
       await upstream.body?.cancel();
       const errors = {
